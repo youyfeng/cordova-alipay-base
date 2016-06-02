@@ -381,6 +381,358 @@ public abstract class AlipayUtil {
 
 ```
 
+# 现有项目用例
+```
+package com.xc.freeapp.util.alipay;
+
+import com.xc.freeapp.config.AlipayConfig;
+import com.xc.freeapp.sign.RSA;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.UnsupportedEncodingException;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.util.Map;
+
+import static com.xc.freeapp.config.AlipayConfig.sign_type;
+
+/* *
+ *类名：AlipayNotify
+ *功能：支付宝通知处理类
+ *详细：处理支付宝各接口通知返回
+ *版本：3.3
+ *日期：2012-08-17
+ *说明：
+ *以下代码只是为了方便商户测试而提供的样例代码，商户可以根据自己网站的需要，按照技术文档编写,并非一定要使用该代码。
+ *该代码仅供学习和研究支付宝接口使用，只是提供一个参考
+
+ *************************注意*************************
+ *调试通知返回时，可查看或改写log日志的写入TXT里的数据，来检查通知返回是否正常
+ */
+public class AlipayNotify {
+
+  /**
+   * 支付宝消息验证地址
+   */
+  private static final String HTTPS_VERIFY_URL = "https://mapi.alipay.com/gateway.do?service=notify_verify&";
+
+  /**
+   * 验证消息是否是支付宝发出的合法消息
+   *
+   * @param params 通知返回来的参数数组
+   * @return 验证结果
+   */
+  public static boolean verify(Map<String, String> params) {
+
+    //判断responsetTxt是否为true，isSign是否为true
+    //responsetTxt的结果不是true，与服务器设置问题、合作身份者ID、notify_id一分钟失效有关
+    //isSign不是true，与安全校验码、请求时的参数格式（如：带自定义参数等）、编码格式有关
+    String responseTxt = "false";
+    if (params.get("notify_id") != null) {
+      String notify_id = params.get("notify_id");
+      responseTxt = verifyResponse(notify_id);
+    }
+    String sign = "";
+    if (params.get("sign") != null) {
+      sign = params.get("sign");
+    }
+    boolean isSign = getSignVeryfy(params, sign);
+
+    //写日志记录（若要调试，请取消下面两行注释）
+    //String sWord = "responseTxt=" + responseTxt + "\n isSign=" + isSign + "\n 返回回来的参数：" + AlipayCore.createLinkString(params);
+    //AlipayCore.logResult(sWord);
+
+    if (isSign && responseTxt.equals("true")) {
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  /**
+   * 根据反馈回来的信息，生成签名结果
+   *
+   * @param Params 通知返回来的参数数组
+   * @param sign   比对的签名结果
+   * @return 生成的签名结果
+   */
+  private static boolean getSignVeryfy(Map<String, String> Params, String sign) {
+    //过滤空值、sign与sign_type参数
+    Map<String, String> sParaNew = AlipayCore.paraFilter(Params);
+    //获取待签名字符串
+    String preSignStr = AlipayCore.createLinkString(sParaNew);
+    //获得签名验证结果
+    boolean isSign = false;
+    if (sign_type.equals("RSA")) {
+      isSign = RSA.verify(preSignStr, sign, AlipayConfig.ali_public_key, AlipayConfig.input_charset);
+    }
+    return isSign;
+  }
+
+
+
+  /**
+   * 追加签名sign
+   */
+  public static String addSign(Map<String, String> Params) {
+    //过滤空值、sign与sign_type参数
+
+    Map<String, String> sParaNew = AlipayCore.paraFilter(Params);
+    //获取待签名字符串
+//    String preSignStr = AlipayCore.createLinkString(sParaNew);
+    String preSignStr = createRequestParameters(sParaNew);
+    String sign = RSA.sign(preSignStr, AlipayConfig.private_key, AlipayConfig.input_charset);
+    try {
+      sign= URLEncoder.encode(sign, "UTF-8");
+    } catch (UnsupportedEncodingException e) {
+      e.printStackTrace();
+    }
+    return preSignStr + "&sign=\"" + sign + "\"&sign_type=\"" + AlipayConfig.sign_type + "\"";
+
+  }
+
+  public static String createRequestParameters(Map<String, String> Params) {
+    // 签约合作者身份ID
+    String orderInfo = "partner=" + "\"" + AlipayConfig.partner + "\"";
+
+    // 签约卖家支付宝账号
+    orderInfo += "&seller_id=" + "\"" + AlipayConfig.seller_id + "\"";
+
+    // 商户网站唯一订单号
+    orderInfo += "&out_trade_no=" + "\"" + Params.get("out_trade_no") + "\"";
+
+    // 商品名称
+    orderInfo += "&subject=" + "\"" + Params.get("subject") + "\"";
+
+    // 商品详情
+    orderInfo += "&body=" + "\"" + Params.get("body") + "\"";
+
+    // 商品金额
+    orderInfo += "&total_fee=" + "\"" + Params.get("total_fee") + "\"";
+
+    // 服务器异步通知页面路径
+    orderInfo += "&notify_url=" + "\"" + AlipayConfig.notify_url
+                 + "\"";
+
+    // 服务接口名称， 固定值
+    orderInfo += "&service=\"" + AlipayConfig.service
+                 + "\"";
+
+    // 支付类型， 固定值
+    orderInfo += "&payment_type=\"1\"";
+
+    // 参数编码， 固定值
+    orderInfo += "&_input_charset=\"" + AlipayConfig.input_charset
+                 + "\"";
+
+    // 设置未付款交易的超时时间
+    // 默认30分钟，一旦超时，该笔交易就会自动被关闭。
+    // 取值范围：1m～15d。
+    // m-分钟，h-小时，d-天，1c-当天（无论交易何时创建，都在0点关闭）。
+    // 该参数数值不接受小数点，如1.5h，可转换为90m。
+    orderInfo += "&it_b_pay=\"30m\"";
+
+    // extern_token为经过快登授权获取到的alipay_open_id,带上此参数用户将使用授权的账户进行支付
+    // orderInfo += "&extern_token=" + "\"" + extern_token + "\"";
+
+    // 支付宝处理完请求后，当前页面跳转到商户指定页面的路径，可空
+    orderInfo += "&return_url=\"m.alipay.com\"";
+
+    // 调用银行卡支付，需配置此参数，参与签名， 固定值 （需要签约《无线银行卡快捷支付》才能使用）
+    // orderInfo += "&paymethod=\"expressGateway\"";
+    return orderInfo;
+  }
+
+
+  /**
+   * 获取远程服务器ATN结果,验证返回URL
+   *
+   * @param notify_id 通知校验ID
+   * @return 服务器ATN结果 验证结果集： invalid命令参数不对 出现这个错误，请检测返回处理中partner和key是否为空 true 返回正确信息 false
+   * 请检查防火墙或者是服务器阻止端口问题以及验证时间是否超过一分钟
+   */
+  private static String verifyResponse(String notify_id) {
+    //获取远程服务器ATN结果，验证是否是支付宝服务器发来的请求
+
+    String partner = AlipayConfig.partner;
+    String veryfy_url = HTTPS_VERIFY_URL + "partner=" + partner + "&notify_id=" + notify_id;
+
+    return checkUrl(veryfy_url);
+  }
+
+  /**
+   * 获取远程服务器ATN结果
+   *
+   * @param urlvalue 指定URL路径地址
+   * @return 服务器ATN结果 验证结果集： invalid命令参数不对 出现这个错误，请检测返回处理中partner和key是否为空 true 返回正确信息 false
+   * 请检查防火墙或者是服务器阻止端口问题以及验证时间是否超过一分钟
+   */
+  private static String checkUrl(String urlvalue) {
+    String inputLine = "";
+
+    try {
+      URL url = new URL(urlvalue);
+      HttpURLConnection urlConnection = (HttpURLConnection) url.openConnection();
+      BufferedReader in = new BufferedReader(new InputStreamReader(urlConnection
+                                                                       .getInputStream()));
+      inputLine = in.readLine().toString();
+    } catch (Exception e) {
+      e.printStackTrace();
+      inputLine = "";
+    }
+
+    return inputLine;
+  }
+}
+
+```
+
+```
+package com.xc.freeapp.controller;
+
+import com.alibaba.fastjson.JSONObject;
+import com.wordnik.swagger.annotations.Api;
+import com.wordnik.swagger.annotations.ApiOperation;
+import com.xc.freeapp.bean.AuthInfo;
+import com.xc.freeapp.common.OrderState;
+import com.xc.freeapp.common.OrderTradeStatus;
+import com.xc.freeapp.entity.TOrder;
+import com.xc.freeapp.exception.BaseException;
+import com.xc.freeapp.filter.TokenAnnotation;
+import com.xc.freeapp.request.OrderRequest;
+import com.xc.freeapp.service.AliPayService;
+import com.xc.freeapp.service.OrderService;
+import com.xc.freeapp.util.AuthUtil;
+import com.xc.freeapp.util.DateUtils;
+import com.xc.freeapp.util.alipay.AlipayNotify;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.ResponseBody;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+
+/**
+ * Created by guoshuaipeng on 2016/5/6.
+ */
+@Controller
+@RequestMapping("/alipay")
+@Api(value = "/alipay", description = "支付宝支付")
+@Slf4j
+public class AlipayController extends AbstractController {
+
+
+    @Autowired
+    private OrderService orderService;
+
+    @Autowired
+    private AliPayService aliPayService;
+
+
+    private String SUCCESS = "success";
+    private String FAIL = "fail";
+
+    @TokenAnnotation(required = false)
+    @RequestMapping(value = "/callback", method = RequestMethod.POST)
+    @ApiOperation(value = "支付回调接口")
+    @ResponseBody
+    public String callback(HttpServletRequest request,
+                           HttpServletResponse response) throws Exception {
+        try {
+
+            //获取支付宝POST过来反馈信息
+            Map<String, String> params = new HashMap<String, String>();
+            Map requestParams = request.getParameterMap();
+            Iterator iter = requestParams.keySet().iterator();
+            while (iter.hasNext()) {
+                String name = (String) iter.next();
+                String[] values = (String[]) requestParams.get(name);
+                String valueStr = "";
+                for (int i = 0; i < values.length; i++) {
+                    valueStr = (i == values.length - 1) ? valueStr + values[i]
+                            : valueStr + values[i] + ",";
+                }
+
+                //乱码解决，这段代码在出现乱码时使用。如果mysign和sign不相等也可以使用这段代码转化
+                //valueStr = new String(valueStr.getBytes("ISO-8859-1"), "gbk");
+                params.put(name, valueStr);
+            }
+            log.info("支付回调接口:" + JSONObject.toJSONString(params));
+
+            String trade_status = new String(request.getParameter("trade_status").getBytes("ISO-8859-1"), "UTF-8");
+            log.info("支付回调trade_status=" + trade_status);
+            if (AlipayNotify.verify(params)) {//验证成功
+                log.info("支付回调验签成功");
+
+                if (trade_status.equals("TRADE_FINISHED")) {
+                    log.info("支付宝非第一次回调");
+                } else if (trade_status.equals("TRADE_SUCCESS")) {
+                    if (aliPayService.isFinish(params)) {
+                        log.info("订单已经处理完成,订单号:" + params.get("out_trade_no"));
+                    } else {
+                        aliPayService.paySuccess(params);
+                    }
+                }
+                log.debug("支付回调处理成功,返回SUCCESS");
+                return SUCCESS;
+            } else {
+                log.error("支付回调验签失败");
+                return FAIL;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            log.error("支付回调验签失败" + e.getMessage());
+            return FAIL;
+        }
+
+    }
+
+    @TokenAnnotation(required = true)
+    @RequestMapping(value = "/order", method = RequestMethod.POST)
+    @ApiOperation(value = "下单接口")
+    @ResponseBody
+    public Map<String, String> saveOrder(@RequestBody() OrderRequest orderRequest) throws BaseException {
+
+        Map<String, String> requestMap = new HashMap<String, String>();
+        AuthInfo authInfo = AuthUtil.getAuthInfo(getRequest());
+
+        Map<String, String> paramsMap = new HashMap<String, String>();
+        String orderCode = DateUtils.getOrderCode();//获取订单编号
+        paramsMap.put("app_id", orderRequest.getApp_id());
+        paramsMap.put("appenv", orderRequest.getAppenv());
+        paramsMap.put("out_trade_no", orderCode);
+        paramsMap.put("subject", orderRequest.getSubject());
+        paramsMap.put("payment_type", orderRequest.getPayment_type());
+        paramsMap.put("total_fee", "0.01");
+        paramsMap.put("body", orderRequest.getBody());
+
+        TOrder order = new TOrder();
+        order.setOrderCode(orderCode);
+        order.setHospitalid(authInfo.getAppIntId());
+        order.setUserid(authInfo.getUserIntId());
+        order.setPaymentType(orderRequest.getProductType());
+        order.setProductId(orderRequest.getProductId());
+        order.setProductCode(orderRequest.getProductCode());
+        order.setTotalFee(orderRequest.getTotal_fee());
+        order.setTradeStatus(OrderTradeStatus.WAIT_BUYER_PAY);
+        order.setState(OrderState.START_STATE);
+        orderService.insertSelective(order);
+        requestMap.put("orderCode", paramsMap.get("out_trade_no"));
+        requestMap.put("requestStr", AlipayNotify.addSign(paramsMap));
+        return requestMap;
+    }
+}
+```
+
 # FAQ
 
 Q: Android如何调试？
