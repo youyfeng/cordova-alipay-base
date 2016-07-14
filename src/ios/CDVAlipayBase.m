@@ -25,7 +25,7 @@
         [self.commandDelegate sendPluginResult:commandResult callbackId:command.callbackId];
         return;
     }
-
+    currentCallbackId = command.callbackId;
     //从参数中合成paymentString，绝不能把private_key放在客户端中，阿里给的例子太有误导性，新手很容易图简单直接拿来用，殊不知危险性有多高。为了保证安全性，支付字符串需要从服务端合成。
     NSMutableDictionary *args = [command argumentAtIndex:0];
     
